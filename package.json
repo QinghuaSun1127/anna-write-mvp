@@ -1,0 +1,33 @@
+{
+  "name": "anna-write-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "export-server": "node scripts/export-server.mjs",
+    "dev:anna": "npm run build && anna-app dev",
+    "dev:anna:full": "npm run build && (npm run export-server & anna-app dev)",
+    "validate:anna": "npm run build && anna-app validate --strict"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "docx": "^9.7.1",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.11"
+  },
+  "devDependencies": {
+    "@anna-ai/cli": "^0.1.17",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3"
+  }
+}
