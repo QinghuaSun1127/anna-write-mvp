@@ -32,9 +32,7 @@ let sdkLoadAttempted = false;
 let runtimePromise: Promise<AnnaRuntime | null> | null = null;
 let lastError = "";
 
-function waitForScript(src: string, timeoutMs = 1400) {
-  if (sdkLoadAttempted) return Promise.resolve();
-  sdkLoadAttempted = true;
+function waitForScript(src: string, timeoutMs = 1600) {
   return new Promise<void>((resolve) => {
     const script = document.createElement("script");
     const timer = window.setTimeout(() => resolve(), timeoutMs);
@@ -52,6 +50,15 @@ function waitForScript(src: string, timeoutMs = 1400) {
   });
 }
 
+async function loadRuntimeSdk() {
+  if (sdkLoadAttempted) return;
+  sdkLoadAttempted = true;
+  await waitForScript("/static/anna-apps/_sdk/latest/index.js");
+  if (!window.AnnaAppRuntime) {
+    await waitForScript("/static/anna-apps/_sdk/0.1.0/index.js");
+  }
+}
+
 export function getLastAnnaRuntimeError() {
   return lastError;
 }
@@ -64,7 +71,7 @@ export async function getAnnaRuntime() {
   if (window.anna?.llm?.complete) return window.anna;
 
   if (!window.AnnaAppRuntime) {
-    await waitForScript("/static/anna-apps/_sdk/0.2.0/index.js");
+    await loadRuntimeSdk();
   }
 
   if (!window.AnnaAppRuntime) {
