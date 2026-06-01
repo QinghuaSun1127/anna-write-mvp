@@ -1,6 +1,6 @@
 export interface AnnaCompleteResult {
   role?: string;
-  content?: { type?: string; text?: string } | string;
+  content?: Array<{ type?: string; text?: string }> | { type?: string; text?: string } | string;
   text?: string;
   model?: string;
   stopReason?: string;
@@ -10,7 +10,7 @@ export interface AnnaCompleteResult {
 export interface AnnaRuntime {
   llm?: {
     complete: (request: {
-      messages: Array<{ role: "system" | "user" | "assistant"; content: string | { type: "text"; text: string } }>;
+      messages: Array<{ role: "system" | "user" | "assistant"; content: { type: "text"; text: string } }>;
       maxTokens?: number;
       max_tokens?: number;
       temperature?: number;
@@ -155,6 +155,9 @@ export async function getAnnaRuntime() {
 
 export function extractAnnaText(result: AnnaCompleteResult) {
   if (typeof result?.content === "string") return result.content;
+  if (Array.isArray(result?.content)) {
+    return result.content.map((item) => item.text ?? "").join("").trim();
+  }
   if (typeof result?.content?.text === "string") return result.content.text;
   if (typeof result?.text === "string") return result.text;
   return "";
@@ -174,8 +177,8 @@ export async function annaCompleteText(args: {
     const result = await Promise.race([
       runtime.llm.complete({
         messages: [
-          { role: "system", content: args.system },
-          { role: "user", content: JSON.stringify(args.user, null, 2) },
+          { role: "system", content: { type: "text", text: args.system } },
+          { role: "user", content: { type: "text", text: JSON.stringify(args.user, null, 2) } },
         ],
         maxTokens: args.maxTokens ?? 2400,
         temperature: args.temperature ?? 0.25,

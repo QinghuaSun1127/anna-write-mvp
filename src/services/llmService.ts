@@ -242,7 +242,7 @@ export const llmService = {
     if (lastProvider === "anna") return "Anna LLM connected";
     if (isAnnaEntryPreview()) return "Preview only";
     const error = getLastAnnaRuntimeError();
-    if (error) return "Mock fallback";
+    if (error) return `LLM error: ${error.slice(0, 42)}`;
     if (hasAnnaRuntimeGlobal()) return "Anna LLM ready";
     return "Mock mode";
   },
