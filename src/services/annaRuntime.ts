@@ -32,6 +32,15 @@ let sdkLoadAttempted = false;
 let runtimePromise: Promise<AnnaRuntime | null> | null = null;
 let lastError = "";
 
+export function hasAnnaSessionCredentials() {
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(params.get("wid") && params.get("t"));
+}
+
+export function isAnnaEntryPreview() {
+  return window.location.pathname.includes("/anna-apps/") && !hasAnnaSessionCredentials() && !window.anna?.llm?.complete;
+}
+
 function waitForScript(src: string, timeoutMs = 1600) {
   return new Promise<void>((resolve) => {
     const script = document.createElement("script");
@@ -63,12 +72,25 @@ export function getLastAnnaRuntimeError() {
   return lastError;
 }
 
+export function getAnnaRuntimeHint() {
+  if (window.anna?.llm?.complete) return "";
+  if (isAnnaEntryPreview()) {
+    return "Entry preview has no Anna session token. Open the published app window to use Anna LLM.";
+  }
+  return lastError;
+}
+
 export function hasAnnaRuntimeGlobal() {
   return Boolean(window.anna?.llm?.complete || window.AnnaAppRuntime);
 }
 
 export async function getAnnaRuntime() {
   if (window.anna?.llm?.complete) return window.anna;
+
+  if (isAnnaEntryPreview()) {
+    lastError = "Entry preview has no Anna session token. Open the published app window to use Anna LLM.";
+    return null;
+  }
 
   if (!window.AnnaAppRuntime) {
     await loadRuntimeSdk();
@@ -110,20 +132,26 @@ export async function annaCompleteText(args: {
   const runtime = await getAnnaRuntime();
   if (!runtime?.llm?.complete) return null;
 
-  const result = await Promise.race([
-    runtime.llm.complete({
-      messages: [
-        { role: "system", content: args.system },
-        { role: "user", content: JSON.stringify(args.user, null, 2) },
-      ],
-      maxTokens: args.maxTokens ?? 2400,
-      temperature: args.temperature ?? 0.25,
-      metadata: { app: "annawrite", action: args.name },
-    }),
-    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("anna.llm.complete timed out")), 45000)),
-  ]);
+  try {
+    const result = await Promise.race([
+      runtime.llm.complete({
+        messages: [
+          { role: "system", content: args.system },
+          { role: "user", content: JSON.stringify(args.user, null, 2) },
+        ],
+        maxTokens: args.maxTokens ?? 2400,
+        temperature: args.temperature ?? 0.25,
+        metadata: { app: "annawrite", action: args.name },
+      }),
+      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("anna.llm.complete timed out")), 45000)),
+    ]);
 
-  return extractAnnaText(result);
+    lastError = "";
+    return extractAnnaText(result);
+  } catch (error) {
+    lastError = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
 }
 
 export function parseJsonFromText<T>(text: string): T {

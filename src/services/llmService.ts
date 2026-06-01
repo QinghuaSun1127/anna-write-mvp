@@ -14,7 +14,15 @@ import {
   buildSelectedRewritePrompt,
   buildWholeDraftRefinePrompt,
 } from "./promptBuilders";
-import { annaCompleteText, getAnnaRuntime, getLastAnnaRuntimeError, hasAnnaRuntimeGlobal, parseJsonFromText } from "./annaRuntime";
+import {
+  annaCompleteText,
+  getAnnaRuntime,
+  getAnnaRuntimeHint,
+  getLastAnnaRuntimeError,
+  hasAnnaRuntimeGlobal,
+  isAnnaEntryPreview,
+  parseJsonFromText,
+} from "./annaRuntime";
 import { draftPlainText, makeDraftFromParagraphs, selectedTextFromDraft } from "../utils/draft";
 
 const wait = (ms = 520) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -226,11 +234,13 @@ export const llmService = {
   // The UI only calls this service layer, so provider wiring should stay out of React components.
   getProviderLabel() {
     if (lastProvider === "anna") return "Anna LLM";
+    if (isAnnaEntryPreview()) return getAnnaRuntimeHint();
     return hasAnnaRuntimeGlobal() ? `Mock fallback (${getLastAnnaRuntimeError() || "Anna LLM unavailable"})` : "Mock fallback";
   },
 
   getStatusLabel() {
     if (lastProvider === "anna") return "Anna LLM connected";
+    if (isAnnaEntryPreview()) return "Preview only";
     const error = getLastAnnaRuntimeError();
     if (error) return "Mock fallback";
     if (hasAnnaRuntimeGlobal()) return "Anna LLM ready";
@@ -239,6 +249,7 @@ export const llmService = {
 
   getStatusTone(): "ready" | "mock" | "fallback" {
     if (lastProvider === "anna") return "ready";
+    if (isAnnaEntryPreview()) return "fallback";
     if (getLastAnnaRuntimeError()) return "fallback";
     if (hasAnnaRuntimeGlobal()) return "ready";
     return "mock";
