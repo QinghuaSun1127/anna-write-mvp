@@ -1,3 +1,5 @@
+import "@anna-ai/app-runtime/dist/index.js";
+
 export interface AnnaCompleteResult {
   role?: string;
   content?: Array<{ type?: string; text?: string }> | { type?: string; text?: string } | string;
