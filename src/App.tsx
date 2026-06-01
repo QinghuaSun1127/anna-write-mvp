@@ -2,6 +2,7 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  Clipboard,
   Download,
   Edit3,
   FileText,
@@ -38,6 +39,25 @@ import {
 type Screen = "home" | "styles" | "editor";
 type ExportFormat = "Plain text" | "Markdown" | "HTML" | "Word document" | "PDF" | "LinkedIn post" | "Xiaohongshu post" | "Email draft";
 type ExportResult = { filename: string; content: string; mime: string; extension: string; encoding?: "utf8" | "base64" };
+type ExportSaveStatus = "saved" | "downloaded" | "canceled";
+
+interface FileSystemWritableFileStream {
+  write: (data: Blob) => Promise<void>;
+  close: () => Promise<void>;
+}
+
+interface FileSystemFileHandle {
+  createWritable: () => Promise<FileSystemWritableFileStream>;
+}
+
+declare global {
+  interface Window {
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+      types?: Array<{ description: string; accept: Record<string, string[]> }>;
+    }) => Promise<FileSystemFileHandle>;
+  }
+}
 
 interface RevisionState {
   open: boolean;
@@ -58,7 +78,10 @@ interface AssistantSuggestion {
 interface ExportReceipt {
   filename: string;
   format: ExportFormat;
-  path: string;
+  status: ExportSaveStatus;
+  locationLabel: string;
+  detail: string;
+  copyText: string;
   savedAt: string;
 }
 
@@ -77,9 +100,6 @@ const assistantPresets = [
 ];
 const revisionPresets = ["More natural", "More concise", "More academic", "More emotional", "Less AI-like"];
 const exportFormats: ExportFormat[] = ["Plain text", "Markdown", "HTML", "Word document", "PDF", "LinkedIn post", "Xiaohongshu post", "Email draft"];
-const exportFolderPath = "/Users/qinghuasun/Documents/New project/anna-write-mvp/exports";
-const localExportEndpoint = "/__annawrite_export";
-const localExportFormEndpoint = "http://localhost:5198/export-form";
 const demoGoal = "Write a warm, clear newsletter about starting over in a new city. Make it personal, easy to read, and useful for readers who feel a little lost.";
 
 function Background() {
@@ -361,49 +381,58 @@ async function buildExportFile(draft: Draft, settings: WritingProject["publishSe
   return { filename, content: body, mime: "text/plain;charset=utf-8", extension };
 }
 
-function downloadExportFile(file: ExportResult) {
-  const blob = new Blob([file.encoding === "base64" ? base64ToBytes(file.content) : file.content], { type: file.mime });
+function exportBlob(file: ExportResult) {
+  return new Blob([file.encoding === "base64" ? base64ToBytes(file.content) : file.content], { type: file.mime });
+}
+
+function triggerBrowserDownload(file: ExportResult, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = file.filename;
+  anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-function submitExportForm(file: ExportResult) {
-  const targetName = "annawrite-export-target";
-  let iframe = document.querySelector<HTMLIFrameElement>(`iframe[name="${targetName}"]`);
-  if (!iframe) {
-    iframe = document.createElement("iframe");
-    iframe.name = targetName;
-    iframe.style.display = "none";
-    document.body.appendChild(iframe);
+async function saveExportFile(file: ExportResult): Promise<{ status: ExportSaveStatus; locationLabel: string; detail: string }> {
+  const blob = exportBlob(file);
+  const picker = window.showSaveFilePicker;
+  if (picker) {
+    try {
+      const mime = file.mime.split(";")[0] || "application/octet-stream";
+      const handle = await picker({
+        suggestedName: file.filename,
+        types: [{ description: `${file.extension.toUpperCase()} file`, accept: { [mime]: [`.${file.extension}`] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return {
+        status: "saved",
+        locationLabel: "Saved with system dialog",
+        detail: "The file was saved to the location you chose.",
+      };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return {
+          status: "canceled",
+          locationLabel: "Export canceled",
+          detail: "No file was saved because the save dialog was canceled.",
+        };
+      }
+      // Fall through to browser download when the picker exists but is blocked by the host.
+    }
   }
 
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = localExportFormEndpoint;
-  form.target = targetName;
-  form.style.display = "none";
-
-  const addField = (name: string, value: string) => {
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = name;
-    input.value = value;
-    form.appendChild(input);
+  triggerBrowserDownload(file, blob);
+  return {
+    status: "downloaded",
+    locationLabel: "Browser download",
+    detail: "Your browser or Anna host controls the final location. Check Downloads if no save prompt appeared.",
   };
-
-  addField("filename", file.filename);
-  addField("content", file.content);
-  addField("mime", file.mime);
-  addField("encoding", file.encoding || "utf8");
-  document.body.appendChild(form);
-  form.submit();
-  window.setTimeout(() => form.remove(), 1000);
 }
 
 export default function App() {
@@ -855,21 +884,6 @@ export default function App() {
     }
   };
 
-  const saveExportCopy = async (file: ExportResult) => {
-    try {
-      const response = await fetch(localExportEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(file),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return (await response.json()) as { ok: boolean; path?: string };
-    } catch (error) {
-      submitExportForm(file);
-      return { ok: true, path: `${exportFolderPath}/${file.filename}` };
-    }
-  };
-
   const exportCurrentFormat = async () => {
     if (!project.draft) return;
     const liveDraft = syncDraftFromEditor(project.draft) ?? project.draft;
@@ -881,13 +895,24 @@ export default function App() {
     } as typeof project.publishSettings;
     setProject((current) => ({ ...current, draft: liveDraft, publishSettings: settings, updatedAt: now() }));
     const file = await buildExportFile(liveDraft, settings, project.requirementCards, exportFormat);
-    downloadExportFile(file);
-    const saved = await saveExportCopy(file);
-    const savedPath = saved.path || `${exportFolderPath}/${file.filename}`;
-    setLastExport({ filename: file.filename, format: exportFormat, path: savedPath, savedAt: now() });
+    const saved = await saveExportFile(file);
+    if (saved.status === "canceled") {
+      toast("Export canceled", "info");
+      return;
+    }
+    const copyText = file.encoding === "base64" ? [liveDraft.title, "", draftBlockTexts(liveDraft).join("\n\n")].join("\n\n") : file.content;
+    setLastExport({
+      filename: file.filename,
+      format: exportFormat,
+      status: saved.status,
+      locationLabel: saved.locationLabel,
+      detail: saved.detail,
+      copyText,
+      savedAt: now(),
+    });
     setExportOpen(false);
     setIsModified(false);
-    toast(saved.ok ? `Saved: ${file.filename}` : `Downloaded. Local folder unavailable.`, saved.ok ? "success" : "warning");
+    toast(saved.status === "saved" ? `Saved: ${file.filename}` : `Download started: ${file.filename}`, "success");
   };
 
   const openExportModal = () => setExportOpen(true);
@@ -1423,10 +1448,10 @@ function EditorScreen({
             <select className="field-input" value={exportFormat} onChange={(event) => onExportFormatChange(event.target.value as ExportFormat)}>
               {exportFormats.map((format) => <option key={format}>{format}</option>)}
             </select>
-            <button className="btn btn-primary w-full" onClick={onExportCurrentFormat}><Download size={14} />Download {exportFormat}</button>
-            <p className="tiny-muted">Local copy: exports folder</p>
+            <button className="btn btn-primary w-full" onClick={onExportCurrentFormat}><Download size={14} />Save / Download {exportFormat}</button>
+            <p className="tiny-muted">Choose a save location when prompted. Otherwise check browser Downloads.</p>
           </div>
-          {lastExport ? <ExportReceiptCard receipt={lastExport} /> : null}
+          {lastExport ? <ExportReceiptCard receipt={lastExport} onDownloadAgain={onExportCurrentFormat} /> : null}
           <div className="sidebar-card">
             <h3>Document</h3>
             <div className="info-row"><span>Words</span><strong>{countWords(draftPlainText(draft))}</strong></div>
@@ -1472,12 +1497,15 @@ function renderParagraphText(block: DraftBlock, selectedRange: TextSelectionRang
   );
 }
 
-function ExportReceiptCard({ receipt }: { receipt: ExportReceipt }) {
-  const copyPath = async () => {
+function ExportReceiptCard({ receipt, onDownloadAgain }: { receipt: ExportReceipt; onDownloadAgain: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const copyText = async () => {
     try {
-      await navigator.clipboard.writeText(receipt.path);
+      await navigator.clipboard.writeText(receipt.copyText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
     } catch {
-      // Clipboard is optional in the Anna iframe; the visible path remains available.
+      setCopied(false);
     }
   };
   return (
@@ -1485,8 +1513,16 @@ function ExportReceiptCard({ receipt }: { receipt: ExportReceipt }) {
       <span className="eyebrow">Exported</span>
       <strong>{receipt.filename}</strong>
       <div className="info-row"><span>Format</span><strong>{receipt.format}</strong></div>
-      <p>{receipt.path}</p>
-      <button className="btn btn-secondary w-full" onClick={copyPath}>Copy file path</button>
+      <div className="info-row"><span>Method</span><strong>{receipt.status === "saved" ? "Saved" : "Downloaded"}</strong></div>
+      <p><b>{receipt.locationLabel}</b><br />{receipt.detail}</p>
+      <button className="btn btn-secondary w-full" onClick={copyText}>
+        <Clipboard size={14} />
+        {copied ? "Copied text" : "Copy text"}
+      </button>
+      <button className="btn btn-secondary w-full" onClick={onDownloadAgain}>
+        <Download size={14} />
+        Download again
+      </button>
     </div>
   );
 }
@@ -1629,10 +1665,10 @@ function ExportFormatModal({ format, onFormatChange, onClose, onConfirm }: { for
             </button>
           ))}
         </div>
-        <p className="export-path">A local copy is saved to <code>{exportFolderPath}</code>.</p>
+        <p className="export-path">AnnaWrite will open a save dialog when the host allows it. If not, the file is sent to the browser download flow.</p>
         <div className="modal-actions">
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={onConfirm}>Export now</button>
+          <button className="btn btn-primary" onClick={onConfirm}>Save / Download</button>
         </div>
       </section>
     </div>
