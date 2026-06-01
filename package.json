@@ -13,7 +13,6 @@
     "validate:anna": "npm run build && anna-app validate --strict"
   },
   "dependencies": {
-    "@anna-ai/app-runtime": "^0.2.0",
     "@vitejs/plugin-react": "^4.3.4",
     "docx": "^9.7.1",
     "jspdf": "^4.2.1",
