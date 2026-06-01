@@ -22,7 +22,7 @@ export interface AnnaRuntime {
 declare global {
   interface Window {
     AnnaAppRuntime?: {
-      connect: () => Promise<AnnaRuntime>;
+      connect: (options?: { windowUuid?: string; token?: string }) => Promise<AnnaRuntime>;
     };
     anna?: AnnaRuntime;
   }
@@ -32,9 +32,46 @@ let sdkLoadAttempted = false;
 let runtimePromise: Promise<AnnaRuntime | null> | null = null;
 let lastError = "";
 
+type AnnaCredentials = {
+  wid: string;
+  token: string;
+  source: string;
+};
+
+function credentialsFromValue(value: string | undefined, source: string): AnnaCredentials | null {
+  if (!value) return null;
+
+  const raw = value.startsWith("?") || value.startsWith("#") ? value.slice(1) : value;
+  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : raw;
+  const params = new URLSearchParams(query);
+  const wid = params.get("wid");
+  const token = params.get("t");
+  return wid && token ? { wid, token, source } : null;
+}
+
+function readWindowCredentials(target: Window, label: string): AnnaCredentials | null {
+  try {
+    return (
+      credentialsFromValue(target.location.search, `${label}.search`) ||
+      credentialsFromValue(target.location.hash, `${label}.hash`) ||
+      credentialsFromValue(target.location.href, `${label}.href`)
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function getAnnaSessionCredentials(): AnnaCredentials | null {
+  return (
+    readWindowCredentials(window, "window") ||
+    readWindowCredentials(window.parent, "parent") ||
+    readWindowCredentials(window.top ?? window, "top") ||
+    credentialsFromValue(document.referrer, "document.referrer")
+  );
+}
+
 export function hasAnnaSessionCredentials() {
-  const params = new URLSearchParams(window.location.search);
-  return Boolean(params.get("wid") && params.get("t"));
+  return Boolean(getAnnaSessionCredentials());
 }
 
 export function isAnnaEntryPreview() {
@@ -75,7 +112,7 @@ export function getLastAnnaRuntimeError() {
 export function getAnnaRuntimeHint() {
   if (window.anna?.llm?.complete) return "";
   if (isAnnaEntryPreview()) {
-    return "Entry preview has no Anna session token. Open the published app window to use Anna LLM.";
+    return "Entry preview has no Anna session token. Anna LLM needs wid/t from the host runtime.";
   }
   return lastError;
 }
@@ -87,11 +124,6 @@ export function hasAnnaRuntimeGlobal() {
 export async function getAnnaRuntime() {
   if (window.anna?.llm?.complete) return window.anna;
 
-  if (isAnnaEntryPreview()) {
-    lastError = "Entry preview has no Anna session token. Open the published app window to use Anna LLM.";
-    return null;
-  }
-
   if (!window.AnnaAppRuntime) {
     await loadRuntimeSdk();
   }
@@ -101,7 +133,13 @@ export async function getAnnaRuntime() {
     return null;
   }
 
-  runtimePromise ??= window.AnnaAppRuntime.connect()
+  const credentials = getAnnaSessionCredentials();
+  if (!credentials) {
+    lastError = "Entry preview has no Anna session token. Anna LLM needs wid/t from the host runtime.";
+    return null;
+  }
+
+  runtimePromise ??= window.AnnaAppRuntime.connect({ windowUuid: credentials.wid, token: credentials.token })
     .then((runtime) => {
       window.anna = runtime;
       lastError = "";
